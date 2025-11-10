@@ -1,0 +1,63 @@
+{
+  "date": "2025-11-11",
+  "city_url": "https://www.allocine.fr/salle/cinema/ville-113315/",
+  "cinemas": [
+    {
+      "cinema": "UGC Ciné Cité Les Halles",
+      "url": "https://www.allocine.fr/seance/salle_gen_csalle=C0159.html",
+      "date": "2025-11-11",
+      "films": [
+        {
+          "titre": "Gladiator II",
+          "url": "https://www.allocine.fr/film/fichefilm_gen_cfilm=291945.html",
+          "date_sortie": "13 novembre 2024",
+          "realisateur": "Ridley Scott",
+          "genre": "Action, Aventure",
+          "duree": "2h 28min",
+          "seances": [
+            "10:30",
+            "13:45",
+            "17:00",
+            "20:15",
+            "23:30"
+          ]
+        },
+        {
+          "titre": "Wicked",
+          "url": "https://www.allocine.fr/film/fichefilm_gen_cfilm=139654.html",
+          "date_sortie": "4 décembre 2024",
+          "realisateur": "Jon M. Chu",
+          "genre": "Comédie musicale, Fantasy",
+          "duree": "2h 40min",
+          "seances": [
+            "11:00",
+            "14:30",
+            "18:00",
+            "21:30"
+          ]
+        }
+      ]
+    },
+    {
+      "cinema": "Pathé Beaugrenelle",
+      "url": "https://www.allocine.fr/seance/salle_gen_csalle=C0077.html",
+      "date": "2025-11-11",
+      "films": [
+        {
+          "titre": "Le Comte de Monte-Cristo",
+          "url": "https://www.allocine.fr/film/fichefilm_gen_cfilm=294498.html",
+          "date_sortie": "28 juin 2024",
+          "realisateur": "Matthieu Delaporte, Alexandre de La Patellière",
+          "genre": "Aventure, Drame",
+          "duree": "2h 58min",
+          "seances": [
+            "10:00",
+            "13:30",
+            "17:15",
+            "21:00"
+          ]
+        }
+      ]
+    }
+  ]
+}
