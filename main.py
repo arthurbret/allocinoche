@@ -1,129 +1,156 @@
 import asyncio
-import json
-from datetime import date, timedelta
 from playwright.async_api import async_playwright
+import json
 
-# URL de base pour la liste des cinémas (Lyon dans ton cas)
-BASE_URL = "https://www.allocine.fr/salle/cinema/ville-113315/"
-BASE_DOMAIN = "https://www.allocine.fr"
-
-async def scrape_allocine():
-    # 1. Calculer la date de demain
-    tomorrow = date.today() + timedelta(days=1)
-    date_str = tomorrow.strftime("%Y-%m-%d")
-    print(f"--- Lancement du scraper pour la date du : {date_str} ---")
-
-    results = []
+async def scrape_ugc_ultimate():
+    args = ['--disable-blink-features=AutomationControlled']
 
     async with async_playwright() as p:
-        # Lancement du navigateur (headless=True pour serveur)
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        browser = await p.chromium.launch(headless=True, args=args)
+        context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
+        page = await context.new_page()
 
-        # Bloquer les images et les polices pour aller plus vite
-        await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "font"] else route.continue_())
+        print("1. Récupération de l'annuaire...")
+        await page.goto("https://www.ugc.fr/cinemas.html", wait_until="domcontentloaded")
 
-        # 2. Récupérer la liste des cinémas
-        print(f"Récupération de la liste des cinémas sur : {BASE_URL}")
-        await page.goto(BASE_URL, timeout=60000)
-        
-        # Gestion de la bannière cookies (si elle apparait)
+        # --- GESTION COOKIES ---
         try:
-            await page.get_by_role("button", name="Accepter").click(timeout=3000)
-            print("Cookies acceptés.")
-        except:
-            pass
+            cookie_btn = page.locator('.hagreed__continue')
+            if await cookie_btn.count() > 0:
+                await cookie_btn.click()
+                await page.wait_for_timeout(1000)
+        except: pass
 
-        # Sélecteur pour les liens des cinémas sur la page ville
-        # Note : Les classes Allociné changent parfois. On cible les liens dans les h2 de cartes.
-        cinema_links = await page.locator("h2.j_entity_title a").all()
-        
-        cinemas_to_scrape = []
-        for link in cinema_links:
-            url = await link.get_attribute("href")
-            name = await link.inner_text()
-            if url:
-                full_url = f"{BASE_DOMAIN}{url}"
-                cinemas_to_scrape.append({"name": name.strip(), "url": full_url})
+        # --- LISTE DES CINÉMAS ---
+        print("   -> Chargement de la liste...")
+        for _ in range(5):
+            await page.mouse.wheel(0, 4000)
+            await page.wait_for_timeout(500)
 
-        print(f"{len(cinemas_to_scrape)} cinémas trouvés. Début de l'extraction des séances...")
+        links = await page.query_selector_all('a[data-keywords]')
+        unique_urls = []
+        for link in links:
+            href = await link.get_attribute('href')
+            if href:
+                if href.startswith('http'): full = href
+                elif href.startswith('/'): full = "https://www.ugc.fr" + href
+                else: full = "https://www.ugc.fr/" + href
+                if full not in unique_urls and "cinema" in full:
+                    unique_urls.append(full)
 
-        # 3. Parcourir chaque cinéma
-        for cinema in cinemas_to_scrape:
-            # Construction de l'URL avec le hash de date
-            target_url = f"{cinema['url']}#shwt_date={date_str}"
-            print(f"Scraping : {cinema['name']} ({target_url})")
+        print(f"   -> {len(unique_urls)} cinémas à traiter.")
 
+        results = []
+
+        # --- BOUCLE PRINCIPALE ---
+        for index, url in enumerate(unique_urls):
+            print(f"\n[{index+1}/{len(unique_urls)}] {url}")
+            
             try:
-                await page.goto(target_url, timeout=30000)
-                # On attend que le conteneur des films soit chargé
-                # C'est crucial pour que le JS prenne en compte la date
-                await page.wait_for_load_state("networkidle") 
+                # 1. Navigation sécurisée
+                try:
+                    await page.goto(url, wait_until="networkidle", timeout=40000)
+                except:
+                    print("   (Timeout réseau, on tente l'extraction...)")
 
-                cinema_data = {
-                    "cinema_name": cinema['name'],
-                    "cinema_url": target_url,
-                    "scrape_date": date_str,
-                    "films": []
-                }
+                # 2. Vérification chargement
+                try:
+                    await page.wait_for_selector('a.color--dark-blue', timeout=5000)
+                except:
+                    await page.evaluate("window.scrollTo(0, 500)")
+                    await page.wait_for_timeout(2000)
 
-                # Récupération des blocs de films
-                movie_cards = await page.locator(".movie-card-theater").all()
+                # Info Cinéma
+                try:
+                    c_name = await page.inner_text('.block--title h1')
+                    c_addr = await page.inner_text('p.text-center')
+                except: 
+                    c_name, c_addr = "Inconnu", ""
 
-                for card in movie_cards:
-                    film_info = {}
-                    
-                    # Titre et URL
-                    title_el = card.locator(".meta-title-link")
-                    if await title_el.count() > 0:
-                        film_info["titre"] = await title_el.first.inner_text()
-                        href = await title_el.first.get_attribute("href")
-                        film_info["url"] = f"{BASE_DOMAIN}{href}" if href else None
-                    else:
-                        continue # Si pas de titre, on saute
+                # --- EXTRACTION INTELLIGENTE DES FILMS ---
+                # On repère tous les titres
+                titles_loc = page.locator('a.color--dark-blue')
+                count = await titles_loc.count()
+                
+                print(f"   -> {count} titres détectés.", end="")
+                
+                cinema_movies = []
+                films_added = 0
 
-                    # Réalisateur (parfois dans "meta-body-item")
-                    director_el = card.locator(".meta-body-direction .dark-grey-link")
-                    if await director_el.count() > 0:
-                        film_info["realisateur"] = await director_el.first.inner_text()
-                    else:
-                        film_info["realisateur"] = "Inconnu"
+                for i in range(count):
+                    try:
+                        title_item = titles_loc.nth(i)
+                        title_text = await title_item.inner_text()
+                        
+                        # STRATÉGIE ADAPTATIVE :
+                        # On remonte petit à petit jusqu'à trouver un bloc qui contient des boutons
+                        # C'est beaucoup plus robuste que "xpath=../../.."
+                        card_found = None
+                        buttons_found = []
+                        
+                        # On tente de remonter de 1 à 6 niveaux parents
+                        current_parent = title_item
+                        for level in range(6):
+                            # On remonte d'un cran (xpath=..)
+                            current_parent = current_parent.locator('xpath=..')
+                            
+                            # On regarde si ce parent contient des boutons
+                            # On cherche spécifiquement les boutons qui ont une heure (div.screening-start)
+                            # pour éviter de cliquer sur des boutons "Voir la fiche" ou autre.
+                            btns = current_parent.locator('button:has(div.screening-start)')
+                            nb_btns = await btns.count()
+                            
+                            if nb_btns > 0:
+                                card_found = current_parent
+                                # On stocke les locators de boutons pour la suite
+                                buttons_found = btns
+                                break # On a trouvé le bon parent !
+                        
+                        # Si on a trouvé des boutons valides
+                        if card_found and await buttons_found.count() > 0:
+                            showtimes = []
+                            count_b = await buttons_found.count()
+                            
+                            for j in range(count_b):
+                                btn = buttons_found.nth(j)
+                                time_val = await btn.locator('div.screening-start').inner_text()
+                                
+                                # Gestion optionnelle de la salle/langue
+                                info_loc = btn.locator('div.text-capitalize')
+                                info_val = await info_loc.inner_text() if await info_loc.count() > 0 else "Standard"
+                                
+                                showtimes.append({
+                                    "time": time_val.strip(),
+                                    "details": info_val.strip()
+                                })
+                            
+                            cinema_movies.append({
+                                "title": title_text.strip(),
+                                "showtimes": showtimes
+                            })
+                            films_added += 1
 
-                    # Date de sortie (souvent dans la meta date)
-                    date_el = card.locator(".meta-body-info .date")
-                    if await date_el.count() > 0:
-                        film_info["date_sortie"] = await date_el.first.inner_text()
-                    else:
-                        film_info["date_sortie"] = "Inconnue"
+                    except Exception as e:
+                        continue 
 
-                    # Séances (Les heures sont souvent dans des boutons ou spans avec la classe showtimes-hour-item-value)
-                    # Attention: Allociné a parfois plusieurs formats (VF, VOSTFR). 
-                    # Pour simplifier, on prend toutes les heures affichées pour ce film.
-                    showtimes = []
-                    times_el = await card.locator(".showtimes-hour-item-value").all()
-                    for t in times_el:
-                        time_text = await t.inner_text()
-                        showtimes.append(time_text)
-                    
-                    film_info["seances"] = showtimes
-
-                    if showtimes: # On ne garde le film que s'il y a des séances
-                        cinema_data["films"].append(film_info)
-
-                if cinema_data["films"]:
-                    results.append(cinema_data)
+                print(f" -> {films_added} films extraits avec horaires.")
+                
+                results.append({
+                    "cinema_name": c_name.strip(),
+                    "cinema_address": c_addr.strip(),
+                    "url": url,
+                    "movies": cinema_movies
+                })
 
             except Exception as e:
-                print(f"Erreur sur le cinéma {cinema['name']}: {e}")
-                continue
+                print(f"   ERREUR: {e}")
 
+        # Sauvegarde
+        with open('ugc_final_fixed.json', 'w', encoding='utf-8') as f:
+            json.dump(results, f, ensure_ascii=False, indent=4)
+        
         await browser.close()
-
-    # 4. Sauvegarde en JSON
-    with open("programmation_cinema.json", "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=4)
-    
-    print("--- Terminé ! Données sauvegardées dans programmation_cinema.json ---")
+        print(f"\n✅ TERMINÉ ! Vérifie 'ugc_final_fixed.json'")
 
 if __name__ == "__main__":
-    asyncio.run(scrape_allocine())
+    asyncio.run(scrape_ugc_ultimate())
