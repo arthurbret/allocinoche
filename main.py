@@ -1,6 +1,91 @@
 import asyncio
 from playwright.async_api import async_playwright
 import json
+import os
+from datetime import date
+from dotenv import load_dotenv
+from supabase import create_client, Client
+
+# Charger les variables d'environnement
+load_dotenv()
+
+# Initialiser le client Supabase
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("Merci de configurer SUPABASE_URL et SUPABASE_KEY dans un fichier .env")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+async def insert_into_supabase(results):
+    """Insère les données dans Supabase"""
+    try:
+        # Date du jour pour les séances
+        today = date.today().isoformat()
+        
+        print(f"\n📊 Insertion dans Supabase (date: {today})...")
+        
+        for cinema in results:
+            # 1. Insérer/mettre à jour le cinéma
+            cinema_data = {
+                "name": cinema["cinema_name"],
+                "address": cinema["cinema_address"],
+                "url": cinema["url"]
+            }
+            
+            cinema_response = supabase.table("cinemas").upsert(
+                cinema_data,
+                on_conflict="url"
+            ).execute()
+            
+            cinema_id = cinema_response.data[0]["id"] if cinema_response.data else None
+            
+            if not cinema_id:
+                print(f"   ⚠️  Impossible d'insérer {cinema['cinema_name']}")
+                continue
+            
+            # 2. Insérer les films et les séances
+            for movie in cinema["movies"]:
+                # Créer ou récupérer le film
+                movie_data = {
+                    "title": movie["title"]
+                }
+                
+                try:
+                    movie_response = supabase.table("movies").upsert(
+                        movie_data,
+                        on_conflict="title"
+                    ).execute()
+                    
+                    movie_id = movie_response.data[0]["id"] if movie_response.data else None
+                    
+                    if not movie_id:
+                        print(f"   ⚠️  Impossible d'insérer le film {movie['title']}")
+                        continue
+                    
+                    # 3. Insérer les showtimes pour ce film dans ce cinéma
+                    for showtime in movie["showtimes"]:
+                        showtime_data = {
+                            "cinema_id": cinema_id,
+                            "movie_id": movie_id,
+                            "showtime_date": today,
+                            "time": showtime["time"],
+                            "details": showtime["details"]
+                        }
+                        
+                        try:
+                            supabase.table("showtimes").insert(showtime_data).execute()
+                        except Exception as e:
+                            print(f"   ⚠️  Erreur insertion séance: {e}")
+                
+                except Exception as e:
+                    print(f"   ⚠️  Erreur avec le film {movie['title']}: {e}")
+        
+        print("✅ Données insérées avec succès!")
+        
+    except Exception as e:
+        print(f"❌ Erreur Supabase: {e}")
 
 async def scrape_ugc_ultimate():
     args = ['--disable-blink-features=AutomationControlled']
@@ -145,12 +230,15 @@ async def scrape_ugc_ultimate():
             except Exception as e:
                 print(f"   ERREUR: {e}")
 
-        # Sauvegarde
+        # Sauvegarde locale
         with open('ugc_final_fixed.json', 'w', encoding='utf-8') as f:
             json.dump(results, f, ensure_ascii=False, indent=4)
         
+        # Insérer dans Supabase
+        await insert_into_supabase(results)
+        
         await browser.close()
-        print(f"\n✅ TERMINÉ ! Vérifie 'ugc_final_fixed.json'")
+        print(f"\n✅ TERMINÉ ! Données sauvegardées en local et dans Supabase")
 
 if __name__ == "__main__":
     asyncio.run(scrape_ugc_ultimate())
