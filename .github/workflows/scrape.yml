@@ -1,0 +1,126 @@
+name: Scrape UGC Showtimes
+
+on:
+  # Exécution quotidienne à 6h UTC
+  schedule:
+    - cron: '0 6 * * *'
+  
+  # Mise à jour des cinémas le 1er de chaque mois à 3h UTC
+  schedule:
+    - cron: '0 3 1 * *'
+  
+  # Permet l'exécution manuelle
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Mode de scraping'
+        required: true
+        default: 'showtimes'
+        type: choice
+        options:
+          - all
+          - cinemas
+          - showtimes
+
+jobs:
+  scrape-showtimes:
+    runs-on: ubuntu-latest
+    # Exécuter uniquement pour le cron quotidien ou l'exécution manuelle avec mode showtimes
+    if: github.event.schedule != '0 3 1 * *'
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: 📦 Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+      
+      - name: 🎬 Scrape showtimes
+        run: python ugc.py --showtimes
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          UGC_DAYS_AHEAD: ${{ vars.UGC_DAYS_AHEAD || '1' }}
+      
+      - name: 📊 Summary
+        if: always()
+        run: |
+          echo "✅ Scraping terminé"
+          echo "🕐 Exécuté à: $(date)"
+
+  scrape-cinemas:
+    runs-on: ubuntu-latest
+    # Exécuter uniquement pour le cron mensuel
+    if: github.event.schedule == '0 3 1 * *'
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: 📦 Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+      
+      - name: 🏢 Scrape cinemas
+        run: python ugc.py --cinemas
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      
+      - name: 📊 Summary
+        if: always()
+        run: |
+          echo "✅ Scraping terminé"
+          echo "🕐 Exécuté à: $(date)"
+
+  manual-scrape:
+    runs-on: ubuntu-latest
+    # Exécuter uniquement pour les déclenchements manuels
+    if: github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: 📦 Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+      
+      - name: 🎬 Scrape (mode: ${{ github.event.inputs.mode }})
+        run: python ugc.py --${{ github.event.inputs.mode }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          UGC_DAYS_AHEAD: ${{ vars.UGC_DAYS_AHEAD || '1' }}
+      
+      - name: 📊 Summary
+        if: always()
+        run: |
+          echo "✅ Scraping terminé"
+          echo "🎯 Mode: ${{ github.event.inputs.mode }}"
+          echo "🕐 Exécuté à: $(date)"
